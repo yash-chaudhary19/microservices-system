@@ -30,11 +30,12 @@ Railway supports multi-service projects with automatic private networking, manag
 ### Step 2: Deploy NATS with JetStream
 1. In the same project canvas, click **New** -> **Docker Image**.
 2. Enter: `nats:2.10-alpine`.
-3. Set the startup arguments / command:
+3. In **Settings** -> **Custom Start Command**, set:
    ```bash
-   -js -m 8222 --user app_user --pass ${NATS_PASSWORD}
+   sh -c "nats-server -js -m 8222 --user ${NATS_USER:-app_user} --pass ${NATS_PASSWORD}"
    ```
-4. Add Environment Variable:
+4. In **Variables**, add:
+   - `NATS_USER`: `app_user`
    - `NATS_PASSWORD`: `<generate-a-strong-random-password>`
 5. Enable **Private Networking** (do not generate a public domain for NATS).
    Internal address will be `nats.railway.internal:4222`.

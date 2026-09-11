@@ -1,6 +1,7 @@
 import json
 import logging
 import asyncio
+import urllib.parse
 from typing import Any
 import nats
 from nats.aio.client import Client as NATSClient
@@ -29,8 +30,39 @@ class NATSManager:
 
     async def connect(self) -> NATSClient:
         """Connect to NATS server with authentication and reconnect handlers."""
+        raw_url = (self.nats_url or "").strip().strip("'\"")
+        parsed = urllib.parse.urlsplit(raw_url)
+        url_user = parsed.username
+        url_password = parsed.password
+
+        # Determine effective credentials:
+        # If credentials are provided in the URL, prioritize them.
+        # Otherwise fallback to user/password passed into constructor.
+        user = url_user if url_user is not None else self.user
+        password = url_password if url_password is not None else self.password
+
+        if user:
+            user = str(user).strip().strip("'\"")
+        if password:
+            password = str(password).strip().strip("'\"")
+
+        # Strip userinfo from the server URL passed to nats-py
+        if url_user or url_password:
+            clean_netloc = parsed.hostname or ""
+            if parsed.port:
+                clean_netloc += f":{parsed.port}"
+            server_url = urllib.parse.urlunsplit((
+                parsed.scheme or "nats",
+                clean_netloc,
+                parsed.path,
+                parsed.query,
+                parsed.fragment,
+            ))
+        else:
+            server_url = raw_url
+
         options: dict[str, Any] = {
-            "servers": [self.nats_url],
+            "servers": [server_url],
             "name": self.name,
             "max_reconnect_attempts": -1,  # Reconnect indefinitely
             "reconnect_time_wait": 2,
@@ -40,11 +72,11 @@ class NATSManager:
             "closed_cb": self._on_closed,
         }
 
-        if self.user and self.password:
-            options["user"] = self.user
-            options["password"] = self.password
+        if user and password:
+            options["user"] = user
+            options["password"] = password
 
-        logger.info(f"Connecting to NATS at {self.nats_url} as {self.name}...")
+        logger.info(f"Connecting to NATS at {server_url} as {self.name} (user: {user or 'None'})...")
         self.nc = await nats.connect(**options)
         self.js = self.nc.jetstream()
         logger.info(f"Successfully connected to NATS & JetStream initialized as {self.name}.")

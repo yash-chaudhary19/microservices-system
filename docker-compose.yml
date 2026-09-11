@@ -21,7 +21,10 @@ services:
     image: nats:2.10-alpine
     container_name: microservices-nats
     restart: unless-stopped
-    command: ["-js", "-m", "8222", "--user", "app_user", "--pass", "nats_secret_password"]
+    command: ["sh", "-c", "nats-server -js -m 8222 --user \"$${NATS_USER:-app_user}\" --pass \"$${NATS_PASSWORD:-nats_secret_password}\""]
+    environment:
+      NATS_USER: app_user
+      NATS_PASSWORD: nats_secret_password
     volumes:
       - natsdata:/data
     healthcheck:
