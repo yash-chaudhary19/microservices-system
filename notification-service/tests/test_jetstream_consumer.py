@@ -82,3 +82,17 @@ async def test_handle_poison_message_max_deliveries_term():
 
     assert msg.ack.call_count == 0
     assert msg.term.call_count == 1
+
+
+async def test_consumer_start_ensures_stream():
+    mock_js = AsyncMock()
+    mock_js.stream_info = AsyncMock(side_effect=Exception("Stream not found"))
+    mock_js.add_stream = AsyncMock()
+    mock_js.subscribe = AsyncMock()
+
+    consumer = JetStreamEventConsumer(mock_js)
+    await consumer.start()
+
+    assert mock_js.add_stream.call_count == 1
+    assert mock_js.subscribe.call_count == 1
+

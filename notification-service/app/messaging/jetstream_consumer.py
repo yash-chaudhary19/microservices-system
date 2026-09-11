@@ -2,13 +2,14 @@ import asyncio
 import json
 import logging
 from nats.js.client import JetStreamContext
-from nats.js.api import ConsumerConfig, DeliverPolicy, AckPolicy
+from nats.js.api import ConsumerConfig, DeliverPolicy, AckPolicy, StreamConfig, RetentionPolicy, StorageType
 from app.core.config import settings
 from app.core.database import async_session_factory
 from app.services.notification_service import NotificationService
 from shared.events.user_events import UserCreatedEventV1
 from shared.messaging.subjects import (
     STREAM_USER_EVENTS,
+    STREAM_USER_SUBJECT_FILTER,
     CONSUMER_NOTIFICATION_USER_EVENTS,
     EVENT_USER_CREATED_V1,
 )
@@ -25,12 +26,33 @@ class JetStreamEventConsumer:
         self._task: asyncio.Task | None = None
         self._sub = None
 
+    async def _ensure_stream_exists(self) -> None:
+        """Create stream if it doesn't already exist on NATS broker."""
+        try:
+            await self.js.stream_info(STREAM_USER_EVENTS)
+            logger.info(f"JetStream stream '{STREAM_USER_EVENTS}' already exists.")
+        except Exception:
+            logger.info(f"Stream '{STREAM_USER_EVENTS}' not found. Creating with subjects '{STREAM_USER_SUBJECT_FILTER}'...")
+            await self.js.add_stream(
+                StreamConfig(
+                    name=STREAM_USER_EVENTS,
+                    subjects=[STREAM_USER_SUBJECT_FILTER],
+                    retention=RetentionPolicy.LIMITS,
+                    storage=StorageType.FILE,
+                    max_msgs=100000,
+                )
+            )
+            logger.info(f"JetStream stream '{STREAM_USER_EVENTS}' created successfully.")
+
     async def start(self) -> None:
         """Initialize durable consumer and start consumption loop."""
         self._running = True
         logger.info(f"Setting up JetStream durable consumer '{CONSUMER_NOTIFICATION_USER_EVENTS}' on stream '{STREAM_USER_EVENTS}'...")
 
-        # Configure durable push subscription or pull subscription
+        # 1. Ensure stream exists so consumer doesn't depend on publisher startup order
+        await self._ensure_stream_exists()
+
+        # 2. Configure durable consumer
         consumer_config = ConsumerConfig(
             durable_name=CONSUMER_NOTIFICATION_USER_EVENTS,
             deliver_policy=DeliverPolicy.ALL,
@@ -41,17 +63,18 @@ class JetStreamEventConsumer:
         )
 
         try:
-            # Subscribe to JetStream stream with durable consumer
+            # Subscribe to JetStream stream with durable consumer explicitly bound to stream
             self._sub = await self.js.subscribe(
                 subject=EVENT_USER_CREATED_V1,
                 durable=CONSUMER_NOTIFICATION_USER_EVENTS,
+                stream=STREAM_USER_EVENTS,
                 config=consumer_config,
                 cb=self._handle_message,
                 manual_ack=True,
             )
             logger.info(
                 f"Successfully registered JetStream consumer '{CONSUMER_NOTIFICATION_USER_EVENTS}' "
-                f"listening on subject '{EVENT_USER_CREATED_V1}'."
+                f"listening on subject '{EVENT_USER_CREATED_V1}' on stream '{STREAM_USER_EVENTS}'."
             )
         except Exception as e:
             logger.error(f"Failed to subscribe to JetStream stream: {e}", exc_info=True)
