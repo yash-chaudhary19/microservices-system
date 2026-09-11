@@ -151,3 +151,24 @@ async def test_authenticate_user_invalid_password(mock_session):
         assert response.success is False
         assert response.error is not None
         assert response.error.code == "INVALID_CREDENTIALS"
+
+
+async def test_get_async_database_url():
+    from app.core.database import get_async_database_url
+
+    # Standard PostgreSQL URL provided by cloud providers like Railway / Heroku
+    url1 = "postgresql://user:pass@host:5432/db"
+    assert get_async_database_url(url1) == "postgresql+asyncpg://user:pass@host:5432/db"
+
+    # psycopg2 URL
+    url2 = "postgresql+psycopg2://user:pass@host:5432/db"
+    assert get_async_database_url(url2) == "postgresql+asyncpg://user:pass@host:5432/db"
+
+    # Legacy postgres:// format
+    url3 = "postgres://user:pass@host:5432/db"
+    assert get_async_database_url(url3) == "postgresql+asyncpg://user:pass@host:5432/db"
+
+    # Already asyncpg format
+    url4 = "postgresql+asyncpg://user:pass@host:5432/db"
+    assert get_async_database_url(url4) == "postgresql+asyncpg://user:pass@host:5432/db"
+
