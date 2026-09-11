@@ -1,0 +1,122 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: microservices-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - microservices-net
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: microservices-nats
+    restart: unless-stopped
+    command: ["-js", "-m", "8222", "--user", "app_user", "--pass", "nats_secret_password"]
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD", "nats-server", "--healthz", "http://localhost:8222"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - microservices-net
+
+  user-service:
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
+    container_name: microservices-user-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/users_db
+      NATS_URL: nats://nats:4222
+      NATS_USER: app_user
+      NATS_PASSWORD: nats_secret_password
+      LOG_LEVEL: INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - microservices-net
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    container_name: microservices-notification-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/notifications_db
+      NATS_URL: nats://nats:4222
+      NATS_USER: app_user
+      NATS_PASSWORD: nats_secret_password
+      CONSUMER_ACK_WAIT_SECONDS: 10
+      CONSUMER_MAX_DELIVER: 3
+      LOG_LEVEL: INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - microservices-net
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    container_name: microservices-api-gateway
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: 8000
+      NATS_URL: nats://nats:4222
+      NATS_USER: app_user
+      NATS_PASSWORD: nats_secret_password
+      JWT_SECRET: production-grade-random-secret-key-change-me-in-prod-32chars
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRATION_MINUTES: 60
+      RATE_LIMIT_REQUESTS_PER_MINUTE: 120
+      LOG_LEVEL: INFO
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - microservices-net
+
+volumes:
+  pgdata:
+  natsdata:
+
+networks:
+  microservices-net:
+    driver: bridge
